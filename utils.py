@@ -19,7 +19,7 @@ class PythonMsg:
         else:
             object.__setattr__(self,key,value)
 @dataclass
-class HMM_constants:
+class Branch_constants:
      s1: float = field(default=None)
      s2: float = field(default=None)
      c2: float = field(default=None)
@@ -36,6 +36,23 @@ class HMM_constants:
      L: float = field(default=None)
      col_alpha:float = field(default=None)
      Kpsi: float = field(default=None)
+
+@dataclass
+class Quad_constants:
+     s1: float = field(default=None)
+     s2: float = field(default=None)
+     c2: float = field(default=None)
+     alpha: float = field(default=None)
+     R: float = field(default=None)
+     vxm: float = field(default=None)
+     vym: float = field(default=None)
+     rm: float = field(default=None)
+     W1: float = field(default=None)
+     L1: float = field(default=None)
+     W2: float = field(default=None)
+     L2: float = field(default=None)
+     col_tol: float = field(default=None)
+     col_alpha:float = field(default=None)
 
 @dataclass
 class MPCParams(PythonMsg):

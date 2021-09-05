@@ -16,13 +16,11 @@ from numpy import linalg as LA
 from numpy.linalg import norm
 from highway_branch_dyn import *
 
-
-
-v0 = 15
-lane_width = 3.6
-lm = [0,3.6,7.2,10.8,14.4,18,21.6]
+v0=20
 f0 = np.array([v0,0,0,0])
-uncontrolled_backup = False
+lane_width = 3.6
+lm = np.arange(0,7)*lane_width
+
 
 
 def with_probability(P=1):
@@ -44,11 +42,13 @@ class vehicle():
         self.state = self.state + dxdt*self.dt
 
 
-
-
-
 class Highway_env():
     def __init__(self,NV,mpc,N_lane=6):
+        '''
+        Input: NV: number of vehicles
+               mpc: mpc controller for the controlled vehicle
+               N_lane: number of lanes
+        '''
         self.dt = mpc.predictiveModel.dt
         self.veh_set = []
         self.NV = NV
@@ -58,38 +58,12 @@ class Highway_env():
         self.predictiveModel = mpc.predictiveModel
         self.backupcons = mpc.predictiveModel.backupcons
 
-        # self.b = np.ones([NV-1,len(self.backupcons)])/len(self.backupcons)
         self.m = len(self.backupcons)
         self.cons = mpc.predictiveModel.cons
         self.LB = [self.cons.W/2,N_lane*3.6-self.cons.W/2]
 
-
-
-        # UB = 30
-        # LB = 0
-        # for i in range(0,NV):
-        #     lane_number = math.floor(random.random()*N_lane)
-        #     success = False
-        #     while not success:
-        #
-        #         Y = (lane_number+0.5)*lane_width+np.random.normal(0,0.1)
-        #         X = random.random()*(UB-LB)+LB
-        #         if i==1:
-        #             X = self.veh_set[0].state[0]+3
-        #         collision = False
-        #         for veh in self.veh_set:
-        #             if abs(Y-veh.state[1])<=3 and abs(X-veh.state[0])<=8:
-        #                 collision=True
-        #                 break
-        #         if not collision:
-        #             success = True
-        #     self.veh_set.append(vehicle([X,Y,v0,0],dt=self.dt,backupidx = 0,laneidx = lane_number))
-        #     v_des = v0 + np.random.normal(0,5)
-        #     if i==0:
-        #         v_des = v0
-        #     self.desired_x[i] = np.array([0,  1.8+3.6*lane_number,v_des,0])
-
         x0 = np.array([[0,1.8,v0,0],[5,5.4,v0,0]])
+        # x0 = np.array([[-8,1.8,v0,0],[5,5.4,v0,0]])
         for i in range(0,self.NV):
             self.veh_set.append(vehicle(x0[i],dt=self.dt,backupidx = 0))
             self.desired_x[i] = np.array([0,  x0[i,1],v0,0])
@@ -97,11 +71,10 @@ class Highway_env():
 
 
     def step(self,t_):
+        # initialize the trajectories to be propagated forward under the backup policy
         u_set  = [None]*self.NV
         xx_set = [None]*self.NV
-        QQ_set = [None]*self.NV
         u0_set = [None]*self.NV
-        Qt_set = [None]*self.NV
         x_set  = [None]*self.NV
 
         umax = np.array([self.cons.am,self.cons.rm])
@@ -113,6 +86,7 @@ class Highway_env():
             newlaneidx = round((z[1]-1.8)/3.6)
 
             if t_==0 or (newlaneidx !=self.veh_set[i].laneidx and abs(z[1]-1.8-3.6*newlaneidx)<1.4):
+                # update the desired lane
                 self.veh_set[i].laneidx = newlaneidx
                 self.desired_x[i][1] = 1.8+newlaneidx*3.6
                 if i==1:
@@ -128,6 +102,7 @@ class Highway_env():
                     backupcons = [lambda x:backup_maintain(x,self.cons),lambda x:backup_brake(x,self.cons),lambda x:backup_lc(x,xRef)]
                     self.predictiveModel.update_backup(backupcons)
             if t_%10==0 and i!=0:
+                # update the desired lane for the uncontrolled vehicle
                 if with_probability(0.5):
                     if self.veh_set[i].laneidx==0:
                         self.desired_x[i][1] = 5.4
@@ -138,28 +113,7 @@ class Highway_env():
                             self.desired_x[i][1] = 1.8+(self.veh_set[i].laneidx-1)*3.6
                         else:
                             self.desired_x[i][1] = 1.8+(self.veh_set[i].laneidx+1)*3.6
-            # if abs(self.veh_set[i].state[1]-(1.8+self.veh_set[i].laneidx*3.6))<0.4:
-            #     if i==0:
-                    # mindis = 1000
-                    # idx = 0
-                    # for ii in range(1,self.NV):
-                    #     if self.veh_set[ii].laneidx!=self.veh_set[0].laneidx and abs(self.veh_set[ii].state[0]-self.veh_set[0].state[0])<mindis:
-                    #         mindis = abs(self.veh_set[ii].state[0]-self.veh_set[0].state[0])
-                    #         idx = ii
-                    # if mindis<4:
-                    #     self.veh_set[0].laneidx = self.veh_set[idx].laneidx
-                #
-                # else:
-                #     if with_probability(0.05):
-                #         if self.veh_set[i].laneidx==0:
-                #             self.veh_set[i].laneidx = 1
-                #         elif self.veh_set[i].laneidx==self.N_lane-1:
-                #             self.veh_set[i].laneidx = self.N_lane-2
-                #         else:
-                #             if with_probability(0.5):
-                #                 self.veh_set[i].laneidx +=1
-                #             else:
-                #                 self.veh_set[i].laneidx-=1
+
         idx0 = self.veh_set[0].backupidx
         n = self.predictiveModel.n
         x1 = xx_set[0][:,idx0*n:(idx0+1)*n]
@@ -173,99 +127,38 @@ class Highway_env():
             u0_set[i]=self.backupcons[self.veh_set[i].backupidx](self.veh_set[i].state)
 
 
+        # set x_ref for the overtaking maneuver and call the MPC
 
-        Ydes = 1.8+self.veh_set[1].laneidx*3.6
-        Ydes = self.veh_set[1].state[1]
-        vdes = self.veh_set[1].state[2]+1*(self.veh_set[1].state[0]+0.5-self.veh_set[0].state[0])
-        xRef = np.array([0,Ydes,vdes,0])
-        # print(self.veh_set[1].backupidx)
-        # startTimer = datetime.datetime.now()
-        self.mpc.solve(self.veh_set[0].state,self.veh_set[1].state,xRef)
-        # endTimer = datetime.datetime.now(); deltaTimer = endTimer - startTimer
-        # print("build time: ", deltaTimer.total_seconds(), " seconds.")
-        if self.mpc.feasible ==1:
-            u_set[0] = self.mpc.uPred[0]
+        if self.veh_set[0].state[0]<self.veh_set[1].state[0]:
+            Ydes = 1.8+self.veh_set[0].laneidx*3.6
         else:
-            pdb.set_trace()
-            u_set[0] = u0_set[0]
-        xPred,zPred = self.mpc.BT2array()
+            Ydes = self.veh_set[1].state[1]
+        if abs(self.veh_set[0].state[1]-Ydes)<1 and self.veh_set[0].state[0]>self.veh_set[1].state[0]+3:
+            vdes = v0
+        else:
+            vdes = self.veh_set[1].state[2]+1*(self.veh_set[1].state[0]+1.5-self.veh_set[0].state[0])
+
+        # Ydes = 1.8+self.veh_set[0].laneidx*3.6
+        # vdes = self.veh_set[1].state[2]+5
+        xRef = np.array([0,Ydes,vdes,0])
+        self.mpc.solve(self.veh_set[0].state,self.veh_set[1].state,xRef)
+
+        u_set[0] = self.mpc.uPred[0]
+        xPred,zPred,uPred,branch_w = self.mpc.BT2array()
         self.veh_set[0].step(u_set[0])
         x_set[0] = self.veh_set[0].state
-
-        ## no control
-        # u_set[0]=np.zeros(2)
-        # self.veh_set[0].step(u_set[0])
-        # x_set[0] = self.veh_set[0].state
-        ## backup CBF QP
+        # if t_==50:
+        #     plot_snapshot(self.veh_set[0].state,self.veh_set[1].state,self,idx=None,varycolor=True,zpatch=False,arrow = False,legend = True)
+        # if t_==25 or t_==35 or t_==50:
+        #     plot_snapshot(self.veh_set[0].state,self.veh_set[1].state,self,idx=None,varycolor=True,zpatch=False,arrow = False,legend = False)
 
         for i in range(1,self.NV):
-            if uncontrolled_backup:
-                A = []
-                b = []
-
-                x = self.veh_set[i].state
-                fi,g = dubin_fg(x)
-                for t in range(0,xx_set[i].shape[0]):
-                    xi = xx_set[i][t][self.veh_set[i].backupidx*4:(self.veh_set[i].backupidx+1)*4]
-                    h,dh = X_bdry(xi,[0,lm[self.N_lane]],self.veh_set[i].v_width)
-                    if h<0.5:
-                        dhdx = np.matmul(dh,QQ_set[i][self.veh_set[i].backupidx][t])
-                        if norm(dhdx.dot(g))>1e-6:
-                            A.append(-dhdx.dot(g))
-                            b.append(dhdx.dot(fi-f0)-np.matmul(dh,Qt_set[i][self.veh_set[i].backupidx][t])+self.cons.alpha*h)
-
-                    for j in range(0,self.NV):
-                        if j!=i:
-                            xj = xx_set[j][t][self.veh_set[j].backupidx*4:(self.veh_set[j].backupidx+1)*4]
-                            eps = 1e-6
-                            h = veh_col(xi,xj,[(self.veh_set[i].v_length+self.veh_set[j].v_length)/2+1,(self.veh_set[i].v_width+self.veh_set[j].v_width)/2+0.2])
-                            # if h<0 and i==1 and j==0:
-                            #     pdb.set_trace()
-                            if h<2:
-                                dh = np.zeros(4)
-                                dh[0] = (veh_col(xi+[eps,0,0,0],xj,[(self.veh_set[i].v_length+self.veh_set[j].v_length)/2+1,(self.veh_set[i].v_width+self.veh_set[j].v_width)/2+0.2])-h)/eps
-                                dh[1] = (veh_col(xi+[0,eps,0,0],xj,[(self.veh_set[i].v_length+self.veh_set[j].v_length)/2+1,(self.veh_set[i].v_width+self.veh_set[j].v_width)/2+0.2])-h)/eps
-                                dhdx = np.matmul(dh,QQ_set[i][self.veh_set[i].backupidx][t])
-                                if norm(dhdx.dot(g))>1e-6:
-                                    A.append(-dhdx.dot(g))
-                                    b.append(dhdx.dot(fi-f0)+self.cons.alpha*h-np.matmul(dh,Qt_set[i][self.veh_set[i].backupidx][t]))
-                if A:
-                    A = np.array(A)
-                    A = np.append(A, -np.ones([A.shape[0],1]), 1)
-                    AA = np.concatenate((A,np.identity(3)))
-                    AA = sparse.csc_matrix(AA)
-
-                    ub = np.append(np.append(np.array(b),np.array(umax)),np.inf)
-                    lb = np.append(np.append(-np.inf*np.ones(len(b)),np.array(-umax)),0.0)
-                    P = np.eye(3)
-                    P[2][2]=0
-                    P = sparse.csc_matrix(P)
-                    q = np.append(-u0_set[i],1e6)
-                    prob = osqp.OSQP()
-                    prob.setup(P, q, AA, lb, ub, alpha=1.0,verbose=False)
-                    res = prob.solve()
-                    # if res.x[0]<-3:
-                    #     pdb.set_trace()
-
-                    if res.info.status_val == 1 or res.info.status_val == 2:
-                        u_set[i] = res.x[0:2]
-                    else:
-                        # pdb.set_trace()
-                        if res.x.shape[0]>0:
-                            u_set[i] = res.x[0:2]
-                        else:
-                            u_set[i] = u0_set[i]
-
-                else:
-                    uu = np.maximum(u0_set[i],-umax)
-                    u_set[i] = np.minimum(uu,umax)
-            else:
-                u_set[i] = u0_set[i]
+            u_set[i] = u0_set[i]
             self.veh_set[i].step(u_set[i])
             x_set[i] = self.veh_set[i].state
 
 
-        return u_set,x_set,xx_set,xPred,zPred
+        return u_set,x_set,xx_set,xPred,zPred, branch_w
 
     def replace_veh(self,idx,dir = 2):
         if idx==0:
@@ -307,12 +200,161 @@ class Highway_env():
                 return False
         self.veh_set[idx] = vehicle([X,Y,self.veh_set[0].state[2],0],dt=self.dt,backupidx = 0,laneidx = laneidx)
         return True
+def merge_geometry(N_lane,merge_lane,merge_s,merge_R, merge_side=0):
+    '''
+    generate the merging geometry
+    input: N_lane: number of lanes on the main highway
+           merge_lane: number of lanes on the ramp
+           merge_s: X coordinate of the merging position
+           merge_R: radius of the arc for the ramp
+           merge_side: left or right
+    '''
+    merge_theta = np.arccos(1-lane_width*merge_lane/merge_R)
+
+    merge_end = merge_s+merge_R*np.sin(merge_theta)
+    if merge_side==0:
+        merge_arc_center = np.array([merge_s+merge_R*np.sin(merge_theta),(N_lane-merge_lane)*lane_width+merge_R])
+        merge_lane_start = np.array([merge_s-merge_s*np.cos(merge_theta),N_lane*lane_width+np.sin(merge_theta)*merge_s])
+    else:
+        merge_arc_center = np.array([merge_s+merge_R*np.sin(merge_theta),merge_lane*lane_width-merge_R])
+        merge_lane_start = np.array([merge_s-merge_s*np.cos(merge_theta),-np.sin(merge_theta)*merge_s-lane_width*merge_lane])
 
 
 
+    merge_lane_ref_s1 = np.linspace(0, merge_s, num=int(merge_s/0.5),endpoint = False) # straight portion
+    merge_lane_ref_s2 = merge_s + np.linspace(0,merge_R*merge_theta,num=int(merge_R*merge_theta/0.5))  #arc portion
+    if merge_side==0:
+        merge_lane_ref_X1 = merge_lane_start[0]+merge_lane_ref_s1*np.cos(merge_theta)
+        merge_lane_ref_Y1 = merge_lane_start[1]-merge_lane_ref_s1*np.sin(merge_theta)
+        merge_lane_ref_psi1 = -np.ones(merge_lane_ref_s1.shape)*merge_theta
+        merge_lane_ref_psi2 = (merge_lane_ref_s2-merge_lane_ref_s2[-1])/merge_R
+        merge_lane_ref_X2 = merge_arc_center[0] + np.sin(merge_lane_ref_psi2)*merge_R
+        merge_lane_ref_Y2 = merge_arc_center[1] - np.cos(merge_lane_ref_psi2)*merge_R
+    else:
+        merge_lane_ref_X1 = merge_lane_start[0]+merge_lane_ref_s1*np.cos(merge_theta)
+        merge_lane_ref_Y1 = merge_lane_start[1]+merge_lane_ref_s1*np.sin(merge_theta)
+        merge_lane_ref_psi1 = np.ones(merge_lane_ref_s1.shape)*merge_theta
+        merge_lane_ref_psi2 = (merge_lane_ref_s2[-1]-merge_lane_ref_s2)/merge_R
+        merge_lane_ref_X2 = merge_arc_center[0] - np.sin(merge_lane_ref_psi2)*merge_R
+        merge_lane_ref_Y2 = merge_arc_center[1] + np.cos(merge_lane_ref_psi2)*merge_R-merge_lane*lane_width
+
+
+    return merge_lane_ref_X1,merge_lane_ref_X2,merge_lane_ref_Y1,merge_lane_ref_Y2,merge_lane_ref_psi1,merge_lane_ref_psi2
+
+class Highway_env_merge():
+    '''
+    Similar object, for merging simulation
+    '''
+    def __init__(self,NV,N_lane, mpc, pred_model, merge_lane=2,merge_s = 50,merge_R=300, merge_side = 0, dt=0.05):
+        self.dt = dt
+        self.veh_set = []
+        self.NV = NV
+        self.laneID = [1]+[0]*(NV-1)
+        self.N_lane = N_lane
+        self.merge_lane = merge_lane
+        self.desired_x = [None]*NV
+        self.merge_s = merge_s
+        self.merge_R = merge_R
+        self.merge_side = merge_side
+        self.pred_model = pred_model
+        self.mpc = mpc
+        self.m = [None]*len(pred_model)
+        self.backupcons = [None]*len(pred_model)
+        for i in range(0,len(pred_model)):
+            self.backupcons[i] = self.pred_model[i].backupcons
+            self.m[i] = len(self.backupcons[i])
+        self.cons = mpc.predictiveModel.cons
+        self.LB = [self.cons.W/2,N_lane*3.6-self.cons.W/2]
+
+        merge_lane_ref_X1,merge_lane_ref_X2,merge_lane_ref_Y1,merge_lane_ref_Y2,merge_lane_ref_psi1,merge_lane_ref_psi2 = merge_geometry(N_lane,merge_lane,merge_s,merge_R, merge_side)
+        self.merge_theta = np.arccos(1-lane_width*merge_lane/merge_R)
+        self.merge_end = merge_s+merge_R*np.sin(self.merge_theta)
+        self.merge_lane_ref_Y = np.append(merge_lane_ref_Y1,merge_lane_ref_Y2)
+        self.merge_lane_ref_X = np.append(merge_lane_ref_X1,merge_lane_ref_X2)
+        self.merge_lane_ref_psi = np.append(merge_lane_ref_psi1,merge_lane_ref_psi2)
+        self.merge_lane_ref_Y1 = merge_lane_ref_Y1
+        self.merge_lane_ref_Y2 = merge_lane_ref_Y2
+        self.merge_lane_ref_X1 = merge_lane_ref_X1
+        self.merge_lane_ref_X2 = merge_lane_ref_X2
+        self.merge_lane_ref_psi1 = merge_lane_ref_psi1
+        self.merge_lane_ref_psi2 = merge_lane_ref_psi2
+        self.refY = interpolant('refY','linear',[self.merge_lane_ref_X],self.merge_lane_ref_Y)
+        self.refpsi = interpolant('refY','linear',[self.merge_lane_ref_X],self.merge_lane_ref_psi)
+        UB = 30
+        LB = 0
+        x0 = np.array([[24,13,v0,-0.2],[15,5.4,v0,0]])
+        for i in range(0,self.NV):
+            self.veh_set.append(vehicle(x0[i],dt=self.dt,backupidx = 0))
+            self.desired_x[i] = np.array([0,  x0[i,1],v0,0])
+
+    def step(self,t_):
+        u_set  = [None]*self.NV
+        xx_set = [None]*self.NV
+        u0_set = [None]*self.NV
+        x_set  = [None]*self.NV
+
+        umax = np.array([self.cons.am,self.cons.rm])
+        # generate backup trajectories
+        self.xbackup = np.empty([0,(self.mpc.N+1)*4])
+        for i in range(0,self.NV):
+            z = self.veh_set[i].state
+            if self.veh_set[i].state[0]>self.merge_s+8:
+                self.laneID[i] = 0
+            xx_set[i] = self.pred_model[self.laneID[i]].zpred_eval(z)
+
+
+        idx0 = self.veh_set[0].backupidx
+        n = self.pred_model[self.laneID[0]].n
+        x1 = xx_set[0][:,idx0*n:(idx0+1)*n]
+        for i in range(0,self.NV):
+            if i!=0:
+                hi = np.zeros(self.m[self.laneID[i]])
+                if self.laneID[i]==0:
+                    for j in range(0,self.m[0]):
+                        hi[j] = min(np.append(veh_col(x1,xx_set[i][:,j*n:(j+1)*n],[self.cons.L+1,self.cons.W+0.2]),lane_bdry_h(xx_set[i][:,j*n:(j+1)*n],self.LB[0],self.LB[1])))
+                elif self.laneID[i]==1:
+                    for j in range(0,self.m[1]):
+                        hi[j] = veh_col(x1,xx_set[i][:,j*n:(j+1)*n],[self.cons.L+1,self.cons.W+0.2])
+                self.veh_set[i].backupidx = np.argmax(hi)
+            self.veh_set[i].backupidx = 0
+            u0_set[i]=self.backupcons[self.laneID[i]][self.veh_set[i].backupidx](self.veh_set[i].state)
+
+
+        x = self.veh_set[0].state
+        if self.laneID[0]==0:
+            S = np.eye(4)
+            xRef = np.array([0,(self.N_lane-0.5)*3.6,v0,0])
+            bx = self.mpc.param.bx
+
+        else:
+            y0 = float(self.refY(x[0]))
+            psi0 = float(self.refpsi(x[0]))
+            S = np.array([[1.,0,0,0],[-np.tan(psi0),1.,0,0],[0,0,1,0],[0,0,0,1]])
+            xRef = np.array([0,-np.tan(psi0)*x[0]+y0+1.8,v0,psi0])
+            bx = np.array([-np.tan(psi0)*x[0]+y0+3.6*self.merge_lane-self.cons.W/2,np.tan(psi0)*x[0]-y0-self.cons.W/2,psi0+self.mpc.psimax,-psi0+self.mpc.psimax])
+
+
+        self.mpc.solve(self.veh_set[0].state,self.veh_set[1].state,xRef,S,Fx=None,bx=bx)
+
+
+
+        u_set[0] = self.mpc.uPred[0]
+        xPred,zPred,uPred,branch_w = self.mpc.BT2array()
+        self.veh_set[0].step(u_set[0])
+        x_set[0] = self.veh_set[0].state
+
+
+        for i in range(1,self.NV):
+            u_set[i] = u0_set[i]
+            self.veh_set[i].step(u_set[i])
+            x_set[i] = self.veh_set[i].state
+
+
+        return u_set,x_set,xx_set,xPred,zPred,branch_w
 
 
 def Highway_sim(env,T):
+    # simulate the scenario
     collision = False
     dt = env.dt
     t=0
@@ -325,6 +367,7 @@ def Highway_sim(env,T):
     backup_choice_rec = [None]*env.NV
     xPred_rec = [None]*N
     zPred_rec = [None]*N
+    branch_w_rec = [None]*N
     for i in range(0,env.NV):
         backup_rec[i]=[None]*N
         backup_choice_rec[i] = [None]*N
@@ -332,9 +375,7 @@ def Highway_sim(env,T):
     f0 = np.array([v0,0,0,0])
     for i in range(0,len(env.veh_set)):
         state_rec[i][t]=env.veh_set[i].state
-    # y_des = [None]*env.NV
-    # for i in range(0,env.NV):
-    #     y_des[i]=env.desired_x[i][1]
+
     xx_set = []
     dis = 100
     while t<N:
@@ -345,58 +386,153 @@ def Highway_sim(env,T):
                         dis = max(abs(env.veh_set[i].state[0]-env.veh_set[j].state[0])-0.5*(env.veh_set[i].v_length+env.veh_set[j].v_length),\
                         abs(env.veh_set[i].state[1]-env.veh_set[j].state[1])-0.5*(env.veh_set[i].v_width+env.veh_set[j].v_width))
                 if dis<0:
-                    # pdb.set_trace()
                     collision = True
 
         print("t=",t*env.dt)
-        # if t%N_update==0:
-        #     for i in range(0,env.NV):
-        #         p = np.random.random()
-        #         if p>0.5:
-        #             lane_des = np.random.choice(env.N_lane)
-        #         else:
-        #             lane_des = int(env.veh_set[i].state[1]/3.6)
-        #             lane_des = max(lane_des,0)
-        #             lane_des = min(lane_des,env.N_lane-1)
-        #
-        #         if i==0:
-        #             v_des = v0 + np.random.randn()*8
-        #             env.desired_x[i] = np.array([0, lm[lane_des]+lane_width/2,v_des,0])
-        #         else:
-        #             if env.veh_set[i].state[0]>env.veh_set[0].state[0]+6:
-        #                 v_des = env.desired_x[0][2] - np.random.random()*4
-        #
-        #             elif env.veh_set[i].state[0]<env.veh_set[0].state[0]-6:
-        #                 v_des = env.desired_x[0][2] + np.random.random()*4
-        #             else:
-        #                 v_des = env.desired_x[i][2]+np.random.randn()*4
-        #             env.desired_x[i][1]=lm[lane_des]+lane_width/2
-        #             env.desired_x[i][2] = v_des
-        #         y_des[i]=env.desired_x[i][1]
 
-
-
-
-        u_set,x_set,xx_set,xPred,zPred=env.step(t)
+        u_set,x_set,xx_set,xPred,zPred,branch_w=env.step(t)
         xPred_rec[t]=xPred
         zPred_rec[t]=zPred
+        branch_w_rec[t] = branch_w
         for i in range(0,env.NV):
             input_rec[i][t]=u_set[i]
             state_rec[i][t]=x_set[i]
             backup_rec[i][t]=xx_set[i]
             backup_choice_rec[i][t] = env.veh_set[i].backupidx
-        # b_rec[t] = env.b.copy()
-
-
         t=t+1
-    # state_rec = np.array(state_rec)
-    return state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,collision
+    return state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,branch_w_rec,collision
+
+def plot_snapshot(x,z,env,idx=None,varycolor=True,zpatch=True,arrow = True,legend = True):
+    '''
+    Ploting a snapshot of the simulation, for debugging
+    '''
+    plot_merge = isinstance(env,Highway_env_merge)
+    if plot_merge:
+        fig = plt.figure(figsize=(15,6))
+    else:
+        fig = plt.figure(figsize=(10,3))
+    ax = fig.add_subplot(111)
+    ego_idx = 0
+    ego_veh = env.veh_set[ego_idx]
+    veh_patch = [None]*env.NV
+    for i in range(0,env.NV):
+        if i==ego_idx:
+            veh_patch[i]=plt.Rectangle((ego_veh.state[0]-ego_veh.v_length/2,ego_veh.state[1]-ego_veh.v_width/2), ego_veh.v_length,ego_veh.v_width, fc='r', zorder=0)
+        else:
+            veh_patch[i]=plt.Rectangle((ego_veh.state[0]-ego_veh.v_length/2,ego_veh.state[1]-ego_veh.v_width/2), ego_veh.v_length,ego_veh.v_width, fc='b', zorder=0)
+
+
+    ego_y = ego_veh.state[1]
+    ego_x = ego_veh.state[0]
+    if plot_merge:
+        xmin = ego_x-10
+        xmax = ego_x+40
+        ymin = -5
+        ymax = 15
+    else:
+        xmin = ego_x-10
+        xmax = ego_x+40
+        ymin = ego_y-5
+        ymax = ego_y+10
+    try:
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(-ymax,-ymin )
+    except:
+        pdb.set_trace()
+    ts = ax.transData
+    for i in range(0,env.NV):
+        coords = ts.transform([env.veh_set[i].state[0],-env.veh_set[i].state[1]])
+        tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], -env.veh_set[i].state[3])
+        te= ts + tr
+        veh_patch[i].set_xy([env.veh_set[i].state[0]-env.veh_set[i].v_length/2,-env.veh_set[i].state[1]-env.veh_set[i].v_width/2])
+        veh_patch[i].set_transform(te)
+        ax.add_patch(veh_patch[i])
+
+    colorset = ['tab:blue','tab:orange','tab:green','tab:red','tab:purple','tab:brown','tab:pink','tab:gray','tab:olive','tab:cyan','y','m','c','g']
+    xPred,zPred,uPred,branch_w = env.mpc.BT2array()
+    if idx is None:
+        idx = range(0,len(zPred))
+
+    for j in idx:
+        for k in range(0,xPred[j].shape[0]):
+            if k%2==1:
+                if varycolor:
+                    x_patch = plt.Rectangle((xPred[j][k,0]-env.veh_set[ego_idx].v_length/2,-xPred[j][k,1]-env.veh_set[ego_idx].v_width/2), env.veh_set[ego_idx].v_length,env.veh_set[ego_idx].v_width,ec=colorset[j], fc=colorset[j],alpha=0.2, zorder=0)
+                else:
+                    x_patch = plt.Rectangle((xPred[j][k,0]-env.veh_set[ego_idx].v_length/2,-xPred[j][k,1]-env.veh_set[ego_idx].v_width/2), env.veh_set[ego_idx].v_length,env.veh_set[ego_idx].v_width,ec='y', fc='y',alpha=0.2, zorder=0)
+                coords = ts.transform([xPred[j][k,0],-xPred[j][k,1]])
+                if arrow:
+                    arr = ax.arrow(xPred[j][k,0],-xPred[j][k,1],uPred[j][k,0]*np.cos(xPred[j][k,3]),-uPred[j][k,0]*np.sin(xPred[j][k,3]),head_width=0.5,length_includes_head=True)
+                else:
+                    arr = None
+                tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], -xPred[j][k,3])
+                x_patch.set_transform(ts+tr)
+                ax.add_patch(x_patch)
+
+    for j in idx:
+        z_patch = plt.plot(zPred[j][:,0],-zPred[j][:,1],'m--',linewidth = 2)[0]
+        if zpatch:
+            for k in range(0,zPred[j].shape[0]):
+                if k%2==1:
+                    if varycolor:
+                        z_patch = plt.Rectangle((zPred[j][k,0]-env.veh_set[1].v_length/2,-zPred[j][k,1]-env.veh_set[1].v_width/2), env.veh_set[1].v_length,env.veh_set[1].v_width,ec=colorset[-1-j], fc=colorset[-1-j],alpha=0.2, zorder=0)
+                    else:
+                        z_patch = plt.Rectangle((zPred[j][k,0]-env.veh_set[1].v_length/2,-zPred[j][k,1]-env.veh_set[1].v_width/2), env.veh_set[1].v_length,env.veh_set[1].v_width,ec='c', fc='c',alpha=0.2, zorder=0)
+                    coords = ts.transform([zPred[j][k,0],-zPred[j][k,1]])
+                    tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], -zPred[j][k,3])
+                    z_patch.set_transform(ts+tr)
+                    ax.add_patch(z_patch)
+    if legend:
+        ax.legend([x_patch,z_patch,arr],['Planned trajectory for ego vehicle','Predicted trajectory for the uncontrolled vehicle','Ego vehicle acceleration'],fontsize=15)
+    if plot_merge:
+        if env.merge_side==0:
+            plt.plot([-10, 1000],[-lm[0], -lm[0]], 'g', linewidth=2)
+            for j in range(1, env.N_lane):
+                plt.plot([-10, 1000],[-lm[j], -lm[j]],  'g--', linewidth=1)
+
+            plt.plot([-10, env.merge_s],[-lm[env.N_lane], -lm[env.N_lane]],  'g', linewidth=2)
+            plt.plot([env.merge_end, 1000],[-lm[env.N_lane], -lm[env.N_lane]],  'g', linewidth=2)
+
+            plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1, 'g', linewidth=2)
+            plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2, 'g--', linewidth=1)
+            for j in range(1,env.merge_lane):
+                plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1-j*lane_width, 'g--', linewidth=1)
+                plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2-j*lane_width, 'g--', linewidth=1)
+            plt.plot(env.merge_lane_ref_X, -env.merge_lane_ref_Y-env.merge_lane*lane_width, 'g', linewidth=2)
+        else:
+            plt.plot([-10, 1000],[-lm[env.N_lane], -lm[env.N_lane]],  'g', linewidth=2)
+            for j in range(1, env.N_lane):
+                plt.plot([-10, 1000],[-lm[j], -lm[j]], 'g--', linewidth=1)
+
+            plt.plot([-10, env.merge_s],[-lm[0], -lm[0]],  'g', linewidth=2)
+            plt.plot([env.merge_end, 1000],[-lm[0], -lm[0]],  'g', linewidth=2)
+
+            plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1, 'g', linewidth=2)
+            plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2, 'g', linewidth=2)
+            for j in range(1,env.merge_lane):
+                plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1-j*lane_width, 'g--', linewidth=1)
+                plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2-j*lane_width, 'g--', linewidth=1)
+            plt.plot(env.merge_lane_ref_X, -env.merge_lane_ref_Y-env.merge_lane*lane_width, 'g', linewidth=2)
+    else:
+        plt.plot([xmin-50, xmax+50],[-lm[0], -lm[0]], 'g', linewidth=2)
+        for j in range(1, env.N_lane):
+            plt.plot([xmin-50, xmax+50],[-lm[j], -lm[j]], 'g--', linewidth=1)
+        plt.plot([xmin-50, xmax+50],[-lm[env.N_lane], -lm[env.N_lane]], 'g', linewidth=2)
+    plt.show()
+
+
 def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,lm,output=None):
+    '''
+    Animate the simulation
+    '''
     if output:
         matplotlib.use("Agg")
     ego_idx = 0
-    fig = plt.figure(figsize=(10,4))
-    # plt.xlim(0, env.N_lane*lane_width)
+    plot_merge = isinstance(env,Highway_env_merge)
+    if plot_merge:
+        fig = plt.figure(figsize=(10,8))
+    else:
+        fig = plt.figure(figsize=(10,4))
     ax = fig.add_subplot(111)
     plt.grid()
 
@@ -411,88 +547,92 @@ def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_
 
     for patch in veh_patch:
         ax.add_patch(patch)
-    # for j in range(0, len(lm)):
-    #     plt.plot([lm[j], lm[j]], [-30, 1000], 'go--', linewidth=2)
 
-    # pred_tr_patch = []
-    # if plotPredictionFlag == True:
-    #     for ii in range(1, env.ftocp.xSol.shape[1]):
-    #         pred_tr_patch.append(plt.Rectangle((env.veh_set[0].x_pred[0][ii]-veh.v_width/2, env.veh_set[0].y_pred[0][ii]-veh.v_length/2), veh.v_width, veh.v_length, fc='y', zorder=0))
-    #     for patch in pred_tr_patch:
-    #         ax.add_patch(patch)
 
     def animate(t,veh_patch,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,env,ego_idx=0):
-
+        plot_merge = isinstance(env,Highway_env_merge)
         N_veh = len(state_rec)
         ego_y = state_rec[ego_idx][t][1]
         ego_x = state_rec[ego_idx][t][0]
         ax.clear()
-        # if env.merge_side==0:
-        #     ax.set_xlim(-1, 39)
-        # else:
-        #     ax.set_xlim(env.N_lane*lane_width-39, env.N_lane*lane_width+1)
-        xmin = ego_x-20
-        xmax = ego_x+30
-        ymin = ego_y-10
-        ymax = ego_y+10
+        if plot_merge:
+            xmin = ego_x-5
+            xmax = ego_x+45
+            ymin = -5
+            ymax = 35
+        else:
+            xmin = ego_x-10
+            xmax = ego_x+40
+            ymin = ego_y-10
+            ymax = ego_y+10
         try:
             ax.set_xlim(xmin, xmax)
-            ax.set_ylim(ymin, ymax)
+            ax.set_ylim(-ymax,-ymin )
         except:
             pdb.set_trace()
         ts = ax.transData
-        # props = dict(boxstyle='none', facecolor='wheat', alpha=0.5)
         for i in range(0,N_veh):
-            coords = ts.transform([state_rec[i][t][0],state_rec[i][t][1]])
-            tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], state_rec[i][t][3])
+            coords = ts.transform([state_rec[i][t][0],-state_rec[i][t][1]])
+            tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], -state_rec[i][t][3])
             te= ts + tr
-            veh_patch[i].set_xy([state_rec[i][t][0]-env.veh_set[i].v_length/2,state_rec[i][t][1]-env.veh_set[i].v_width/2])
+            veh_patch[i].set_xy([state_rec[i][t][0]-env.veh_set[i].v_length/2,-state_rec[i][t][1]-env.veh_set[i].v_width/2])
             veh_patch[i].set_transform(te)
             ax.add_patch(veh_patch[i])
             idx = backup_choice_rec[i][t]
-            # xp = (state_rec[i][t][1]-xmin)/(xmax-xmin)
-            # yp = (state_rec[i][t][0]-ymin)/(ymax-ymin)
-            # if i!=0:
-            #     ax.text(state_rec[i][t][0], state_rec[i][t][1], str(b_rec[t][i-1][0])[0:4], fontsize=14,verticalalignment='top',ha='center')
 
+
+
+
+
+        colorset = ['tab:blue','tab:orange','tab:green','tab:red','tab:purple','tab:brown','tab:pink','tab:gray','tab:olive','tab:cyan','y','m','c','g']
         for j in range(0,len(xPred_rec[t])):
-            plt.plot(xPred_rec[t][j][:,0],xPred_rec[t][j][:,1],'b--',linewidth = 1)
+            plt.plot(xPred_rec[t][j][:,0],-xPred_rec[t][j][:,1],'b--',linewidth = 1)
             for k in range(0,xPred_rec[t][j].shape[0]):
                 if k%2==1:
-                    newpatch = plt.Rectangle((xPred_rec[t][j][k,0]-env.veh_set[ego_idx].v_length/2,xPred_rec[t][j][k,1]-env.veh_set[ego_idx].v_width/2), env.veh_set[ego_idx].v_length,env.veh_set[ego_idx].v_width, fc='y',alpha=0.3, zorder=0)
-                    coords = ts.transform([xPred_rec[t][j][k,0],xPred_rec[t][j][k,1]])
-                    tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], xPred_rec[t][j][k,3])
+                    newpatch = plt.Rectangle((xPred_rec[t][j][k,0]-env.veh_set[ego_idx].v_length/2,-xPred_rec[t][j][k,1]-env.veh_set[ego_idx].v_width/2), env.veh_set[ego_idx].v_length,env.veh_set[ego_idx].v_width, fc=colorset[j],alpha=0.3, zorder=0)
+                    coords = ts.transform([xPred_rec[t][j][k,0],-xPred_rec[t][j][k,1]])
+                    tr = matplotlib.transforms.Affine2D().rotate_around(coords[0], coords[1], -xPred_rec[t][j][k,3])
                     newpatch.set_transform(ts+tr)
                     ax.add_patch(newpatch)
 
         for j in range(0,len(zPred_rec[t])):
-            plt.plot(zPred_rec[t][j][:,0],zPred_rec[t][j][:,1],'r--',linewidth = 1)
+            plt.plot(zPred_rec[t][j][:,0],-zPred_rec[t][j][:,1],'r--',linewidth = 1)
 
+        if plot_merge:
+            if env.merge_side==0:
+                plt.plot([-10, 1000],[-lm[0], -lm[0]], 'g', linewidth=2)
+                for j in range(1, env.N_lane):
+                    plt.plot([-10, 1000],[-lm[j], -lm[j]],  'g--', linewidth=1)
 
-        plt.plot([xmin-50, xmax+50],[lm[0], lm[0]], 'g', linewidth=2)
-        for j in range(1, env.N_lane):
-            plt.plot([xmin-50, xmax+50],[lm[j], lm[j]], 'g--', linewidth=1)
-        plt.plot([xmin-50, xmax+50],[lm[env.N_lane], lm[env.N_lane]], 'g', linewidth=2)
+                plt.plot([-10, env.merge_s],[-lm[env.N_lane], -lm[env.N_lane]],  'g', linewidth=2)
+                plt.plot([env.merge_end, 1000],[-lm[env.N_lane], -lm[env.N_lane]],  'g', linewidth=2)
 
+                plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1, 'g', linewidth=2)
+                plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2, 'g--', linewidth=1)
+                for j in range(1,env.merge_lane):
+                    plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1-j*lane_width, 'g--', linewidth=1)
+                    plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2-j*lane_width, 'g--', linewidth=1)
+                plt.plot(env.merge_lane_ref_X, -env.merge_lane_ref_Y-env.merge_lane*lane_width, 'g', linewidth=2)
+            else:
+                plt.plot([-10, 1000],[-lm[env.N_lane], -lm[env.N_lane]],  'g', linewidth=2)
+                for j in range(1, env.N_lane):
+                    plt.plot([-10, 1000],[-lm[j], -lm[j]], 'g--', linewidth=1)
 
-        # if plotPredictionFlag == True:
-        #
-        #     for ii in range(1, env.ftocp.xSol.shape[1]):
-        #         pred_tr_patch[ii-1].set_xy([env.veh_set[0].x_pred[t][ii]-veh.v_width/2, env.veh_set[0].y_pred[t][ii]-veh.v_length/2])
-        #         ax.add_patch(pred_tr_patch[ii-1])
-            # for ii in range(0,len(env.veh_set[0].obs_rec_x[t])):
-            #     for jj in range(0,len(env.veh_set[0].obs_rec_x[t][ii])):
-            #         obs_patch = plt.Rectangle((env.veh_set[0].obs_rec_x[t][ii][jj]-veh.v_width/2, env.veh_set[0].obs_rec_y[t][ii][jj]-veh.v_length/2), veh.v_width, veh.v_length, fc='m', zorder=0)
-            #         ax.add_patch(obs_patch)
+                plt.plot([-10, env.merge_s],[-lm[0], -lm[0]],  'g', linewidth=2)
+                plt.plot([env.merge_end, 1000],[-lm[0], -lm[0]],  'g', linewidth=2)
 
-        # ax.axis('equal')
-        # ax.set_xlim(0, env.N_lane*lane_width)
-        # ax.set_ylim(ego_y-20, ego_y+20)
+                plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1, 'g', linewidth=2)
+                plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2, 'g', linewidth=2)
+                for j in range(1,env.merge_lane):
+                    plt.plot(env.merge_lane_ref_X1, -env.merge_lane_ref_Y1-j*lane_width, 'g--', linewidth=1)
+                    plt.plot(env.merge_lane_ref_X2, -env.merge_lane_ref_Y2-j*lane_width, 'g--', linewidth=1)
+                plt.plot(env.merge_lane_ref_X, -env.merge_lane_ref_Y-env.merge_lane*lane_width, 'g', linewidth=2)
+        else:
+            plt.plot([xmin-50, xmax+50],[-lm[0], -lm[0]], 'g', linewidth=2)
+            for j in range(1, env.N_lane):
+                plt.plot([xmin-50, xmax+50],[-lm[j], -lm[j]], 'g--', linewidth=1)
+            plt.plot([xmin-50, xmax+50],[-lm[env.N_lane], -lm[env.N_lane]], 'g', linewidth=2)
 
-
-        # return near_veh
-        # print(len(ax.patches))
-        # print(len(plotted_veh_ID))
         return veh_patch
     anim = animation.FuncAnimation(fig, animate, fargs=(veh_patch,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,env,ego_idx,),
                                    frames=nframe,
@@ -509,7 +649,19 @@ def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_
         plt.show()
 
 
-def sim(mpc,N_lane,M):
-    env = Highway_env(NV=M+1,mpc = mpc,N_lane=N_lane)
-    state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,collision = Highway_sim(env,10)
-    animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,lm,'branch_sim2.mp4')
+
+def sim_overtake(mpc,N_lane):
+
+    env = Highway_env(NV=2,mpc = mpc,N_lane=N_lane)
+    state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,branch_w_rec,collision = Highway_sim(env,10)
+
+    animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,lm)
+    br = np.reshape(np.array(branch_w_rec),[-1,12])
+
+def sim_merge(mpc,pred_model,N_lane,merge_lane,merge_s ,merge_R, merge_side):
+
+
+    NV = 2
+    env = Highway_env_merge(NV,N_lane, mpc, pred_model, merge_lane,merge_s,merge_R, merge_side,pred_model[0].dt)
+    state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,collision = Highway_sim(env,6)
+    animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,lm)

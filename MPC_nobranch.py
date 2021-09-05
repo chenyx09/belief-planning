@@ -55,7 +55,7 @@ class MPCParams(PythonMsg):
 ####################################### MPC CLASS ##########################################
 ############################################################################################
 class BranchTree():
-    def __init__(self,xtraj,ztraj,utraj,w,depth=0):
+    def __init__(self,ztraj,w,depth=0):
         self.ztraj = ztraj
         self.w = w
         self.children = []
@@ -65,7 +65,7 @@ class BranchTree():
     def addchild(self,BT):
         self.children.append(BT)
 
-class MPC():
+class robustMPC():
     """Model Predicitve Controller class
     Methods (needed by user):
         solve: given system's state xt compute control action at
@@ -94,6 +94,8 @@ class MPC():
         self.bu     = mpcParameters.bu
         self.xRef   = mpcParameters.xRef
         self.m      = predictiveModel.m
+        self.Nx     = self.N*self.NB+2
+        self.Nu     = self.N*self.NB+1
 
         self.slacks          = mpcParameters.slacks
         self.slackdim        = None
@@ -101,7 +103,10 @@ class MPC():
         self.predictiveModel = predictiveModel
         self.osqp = None
         self.BT = None
-        self.zpred = {}
+        self.zpred = [None]*(self.N*self.NB+1)
+        self.zcount = 0
+
+
 
         # if self.timeVarying == True:
         #     self.xLin = self.predictiveModel.xStored[-1][0:self.N+1,:]
@@ -124,94 +129,102 @@ class MPC():
 
     def get_xLin(self,x,z):
         if self.uLin is None:
-            self.uLin = np.zeros([self.N,self.d])
+            self.uLin = np.zeros([self.Nu,self.d])
         self.uLin = np.vstack((self.uLin,self.uLin[-1]))
-        self.xLin = np.zeros([self.N+1,self.n])
+        self.xLin = np.zeros([self.Nx,self.n])
 
         self.xLin[0] = x
-        for i in range(0,self.N):
+        for i in range(0,self.Nx-1):
             A,B,C,xp=self.predictiveModel.dyn_linearization(self.xLin[i],self.uLin[i])
             self.xLin[i+1] = xp
     def inittree(self,z):
-        u = np.zeros(2)
-        self.BT = BranchTree(np.reshape(x,[1,self.n]),np.reshape(z,[1,self.n]),np.reshape(u,[1,self.d]),1,0)
+        self.BT = BranchTree(np.reshape(z,[1,self.n]),1,0)
         q = [self.BT]
-        countx = 0
-        countu = 0
-        self.uLin = np.reshape(u,[1,self.d])
-        self.xLin = np.reshape(x,[1,self.n])
-
-        self.ndx[self.BT] = countx
-        self.ndu[self.BT] = countu
-        A,B,C,xp = self.predictiveModel.dyn_linearization(x,u)
-        self.BT.dynmatr[0] = (A,B,C)
-        countx+=self.BT.xtraj.shape[0]
-        countu+=self.BT.xtraj.shape[0]
-
+        for t in range(0,len(self.zpred)):
+            self.zpred[i] = np.empty([0,self.n])
+        self.zpred[0] = np.array([z])
+        self.zcount=1
         while len(q)>0:
             currentbranch = q.pop(0)
-
+            if currentbranch.depth>0:
+                for i in range(0,currentbranch.ztraj.shape[0]):
+                    t = (currentbranch.depth-1)*self.N+i
+                    self.zpred[t] = np.append(self.zpred[t])
+                    self.zcount+=1
             if currentbranch.depth<self.NB:
                 zpred = self.predictiveModel.zpred_eval(currentbranch.ztraj[-1])
                 p,dp = self.predictiveModel.branch_eval(currentbranch.xtraj[-1],currentbranch.ztraj[-1])
                 currentbranch.p = p
                 currentbranch.dp= dp
+
                 for i in range(0,self.m):
-                    xtraj = np.zeros((self.N,self.n))
-                    utraj = np.zeros((self.N,self.d))
-                    newbranch = BranchTree(xtraj,zpred[:,self.n*i:self.n*(i+1)],utraj,p[i]*currentbranch.w,currentbranch.depth+1)
-                    A,B,C,xp = self.predictiveModel.dyn_linearization(currentbranch.xtraj[-1],currentbranch.utraj[-1])
-                    newbranch.xtraj[0] = xp
-                    for t in range(0,self.N):
-                        A,B,C,xp = self.predictiveModel.dyn_linearization(newbranch.xtraj[t],newbranch.utraj[t])
-                        newbranch.dynmatr[t] = (A,B,C)
-                        if t<self.N-1:
-                            newbranch.xtraj[t+1] = xp
-
-                    self.ndx[newbranch] = countx
-                    self.ndu[newbranch] = countu
-
-                    self.xLin = np.vstack((self.xLin,newbranch.xtraj))
-                    self.uLin = np.vstack((self.uLin,newbranch.utraj))
-                    if newbranch.depth == self.NB:
-                        countx+=(newbranch.xtraj.shape[0]+1)
-                    else:
-                        countx+=newbranch.xtraj.shape[0]
-                    countu+=newbranch.xtraj.shape[0]
+                    newbranch = BranchTree(zpred[:,self.n*i:self.n*(i+1)],p[i]*currentbranch.w,currentbranch.depth+1)
                     currentbranch.addchild(newbranch)
                     q.append(newbranch)
-        self.totalx = countx
-        self.totalu = countu
-        self.slackweight = np.zeros(self.totalx*(self.Fx.shape[0]+1))
+    def updatetree(self,z):
+        q = [self.BT]
+        self.BT.ztraj = np.reshape(z,[1,self.n])
+        for t in range(0,len(self.zpred)):
+            self.zpred[i] = np.empty([0,self.n])
+        self.zpred[0] = np.array([z])
+        while len(q)>0:
+            currentbranch = q.pop(0)
+            if currentbranch.depth>0:
+                for i in range(0,currentbranch.ztraj.shape[0]):
+                    t = (currentbranch.depth-1)*self.N+i
+                    self.zpred[t] = np.append(self.zpred[t])
+            if currentbranch.depth<self.NB:
+                zpred = self.predictiveModel.zpred_eval(currentbranch.ztraj[-1])
+                p,dp = self.predictiveModel.branch_eval(currentbranch.xtraj[-1],currentbranch.ztraj[-1])
+                currentbranch.p = p
+                currentbranch.dp= dp
 
+                for i in range(0,self.m):
+                    currentbranch.children[i].ztraj = zpred[:,self.n*i:self.n*(i+1)]
+                    currentbranch.children[i].w = p[i]*currentbranch.w
+                    q.append(children[i])
 
-    def solve(self, x0,b0,xbackup,xRef=None):
+    def BT2array(self):
+        ztraj = []
+        xtraj = self.xPred[1:]
+        q = [self.BT]
+        while (len(q)>0):
+            curr = q.pop(0)
+            for child in curr.children:
+                ztraj.append(np.vstack((curr.ztraj[-1],child.ztraj)))
+                q.append(child)
+        return xtraj,ztraj
+    def solve(self, x,z,xRef=None):
         """Computes control action
         Arguments:
             x0: current state
         """
         # If LTV active --> identify system model
+
         if not xRef is None:
-            self.xRef = np.append(xRef,np.zeros(self.M*self.m))
-
-
-        self.get_xLin(x0,xbackup,b0)
-        self.computeLTVdynamics(xbackup)
+            self.xRef = xRef
+        if self.BT is None:
+            self.inittree(x,z)
+        else:
+            self.updatetree(x,z)
         self.buildIneqConstr()
         self.buildCost()
         self.buildEqConstr()
-
-        xb0 = np.append(x0,np.reshape(b0,[-1,1]))
-        self.addTerminalComponents(xb0)
+        self.H_FTOCP = sparse.csc_matrix(self.H)
+        self.q_FTOCP = self.q
+        self.F_FTOCP = sparse.csc_matrix(self.F)
+        self.b_FTOCP = self.b
+        self.G_FTOCP = sparse.csc_matrix(self.G)
+        self.E_FTOCP = self.E
+        self.L_FTOCP = self.L
         # Solve QP
         startTimer = datetime.datetime.now()
         self.osqp_solve_qp(self.H_FTOCP, self.q_FTOCP, self.F_FTOCP, self.b_FTOCP, self.G_FTOCP, np.add(np.dot(self.E_FTOCP,xb0),self.L_FTOCP))
         self.unpackSolution()
         endTimer = datetime.datetime.now(); deltaTimer = endTimer - startTimer
         self.solverTime = deltaTimer
-
-        # If LTV active --> compute state-input linearization trajectory
         self.feasibleStateInput()
+        # If LTV active --> compute state-input linearization trajectory
         if self.timeVarying == True:
             self.xLin = np.vstack((self.xPred[1:, :], self.zt))
             self.uLin = np.vstack((self.uPred[1:, :], self.zt_u))
@@ -219,14 +232,14 @@ class MPC():
         # update applied input
         self.OldInput = self.uPred[0,:]
         self.timeStep += 1
+        self.computeLTVdynamics()
 
-
-    def computeLTVdynamics(self,xbackup):
+    def computeLTVdynamics(self):
         # Estimate system dynamics
         self.A = []; self.B = []; self.C =[]; self.h0 = []; self.Jh = []
-        for i in range(0, self.N):
-            Ai, Bi, Ci, h0i, Jhi = self.predictiveModel.regressionAndLinearization(self.xLin[i+1], xbackup[:,i*self.nx:(i+1)*self.nx], self.uLin[i+1])
-            self.A.append(Ai); self.B.append(Bi); self.C.append(Ci); self.h0.append(h0i); self.Jh.append(Jhi)
+        for i in range(0, self.Nu):
+            Ai, Bi, Ci, xpi = self.predictiveModel.dyn_linearization(self.xLin[i], self.uLin[i])
+            self.A.append(Ai); self.B.append(Bi); self.C.append(Ci);
 
     def addTerminalComponents(self, x0):
         # TO DO: ....
@@ -244,8 +257,8 @@ class MPC():
 
     def unpackSolution(self):
         # Extract predicted state and predicted input trajectories
-        self.xPred = np.squeeze(np.transpose(np.reshape((self.Solution[np.arange(self.n*(self.N+1))]),(self.N+1,self.n)))).T
-        self.uPred = np.squeeze(np.transpose(np.reshape((self.Solution[self.n*(self.N+1)+np.arange(self.d*self.N)]),(self.N, self.d)))).T
+        self.xPred = np.squeeze(np.transpose(np.reshape((self.Solution[np.arange(self.n*self.Nx)]),(self.Nx,self.n)))).T
+        self.uPred = np.squeeze(np.transpose(np.reshape((self.Solution[self.n*self.Nx+np.arange(self.d*self.Nu)]),(self.Nu, self.d)))).T
         self.xLin = self.xPred
         self.uLin = self.uPred
         self.uLin = np.vstack((self.uLin,self.uLin[-1]))
@@ -253,38 +266,36 @@ class MPC():
     def buildIneqConstr(self):
         # The inequality constraint is Fz<=b
         # Let's start by computing the submatrix of F relates with the state
-        rep_a = [self.Fx] * (self.N)
+        rep_a = [self.Fx] * (self.Nx-1)
         Mat = linalg.block_diag(*rep_a)
         NoTerminalConstr = np.zeros((np.shape(Mat)[0], self.n))  # The last state is unconstrained. There is a specific function add the terminal constraints (so that more complicated terminal constrains can be handled)
         Fxtot = np.hstack((Mat, NoTerminalConstr))
-        bxtot = np.tile(np.squeeze(self.bx), self.N)
+        bxtot = np.tile(np.squeeze(self.bx), self.Nx)
 
-        Fxbackup = np.zeros([(self.N-1)*self.M*self.m,self.n*(self.N+1)])
-        bxbackup = np.zeros((self.N-1)*self.M*self.m)
+        Fxbackup = np.zeros([self.zcount,self.Nx*self.n])
+        bxbackup = np.zeros(self.zcount)
         counter = 0
-        for i in range(0,self.N-1):
-            b = np.reshape(self.xLin[i+1][self.nx:],[self.M,self.m])
-            for j in range(0,self.M):
-                for k in range(0,self.m):
-                    if b[j,k]>self.thres:
-                        Fxbackup[counter][(i+1)*self.n:(i+2)*self.n] = -self.Jh[i+1][j][k]
-                        bxbackup[counter] = self.h0[i+1][j][k]
-                        # if self.h0[i][j][k]+self.Jh[i][j][k]@self.xLin[i]>0:
-                        #     Fxbackup[counter][(i+1)*self.n:(i+2)*self.n] = -self.Jh[i+1][j][k]
-                        #     Fxbackup[counter][i*self.n:(i+1)*self.n] = self.alphad*self.Jh[i][j][k]
-                        #     bxbackup[counter] = self.h0[i+1][j][k]-self.alphad*self.h0[i][j][k]
-                        # else:
-                        #     Fxbackup[counter][(i+1)*self.n:(i+2)*self.n] = -self.Jh[i+1][j][k]
-                        #     bxbackup[counter] = self.h0[i+1][j][k]
-                        counter+=1
+        for i in range(0,len(self.zpred)):
+            for j in range(0,self.zpred[i].shape[0]):
+                h,dh = self.predictiveModel.col_eval(self.xLin[i],self.zpred[i][j])
+                Fxbackup[counter][self.n*i:self.n*(i+1)] = -dh
+                bxbackup[counter] = h
+                # if self.h0[i][j][k]+self.Jh[i][j][k]@self.xLin[i]>0:
+                #     Fxbackup[counter][(i+1)*self.n:(i+2)*self.n] = -self.Jh[i+1][j][k]
+                #     Fxbackup[counter][i*self.n:(i+1)*self.n] = self.alphad*self.Jh[i][j][k]
+                #     bxbackup[counter] = self.h0[i+1][j][k]-self.alphad*self.h0[i][j][k]
+                # else:
+                #     Fxbackup[counter][(i+1)*self.n:(i+2)*self.n] = -self.Jh[i+1][j][k]
+                #     bxbackup[counter] = self.h0[i+1][j][k]
+                counter+=1
 
         Fxtot = np.vstack((Fxtot,Fxbackup[0:counter]))
         bxtot = np.append(bxtot,bxbackup[0:counter])
         self.slackdim = Fxtot.shape[0]
         # Let's start by computing the submatrix of F relates with the input
-        rep_b = [self.Fu] * (self.N)
+        rep_b = [self.Fu] * (self.Nu)
         Futot = linalg.block_diag(*rep_b)
-        butot = np.tile(np.squeeze(self.bu), self.N)
+        butot = np.tile(np.squeeze(self.bu), self.Nu)
 
         # Let's stack all together
         F_hard = linalg.block_diag(Fxtot, Futot)
@@ -309,15 +320,15 @@ class MPC():
     def buildEqConstr(self):
         # Buil matrices for optimization (Convention from Chapter 15.2 Borrelli, Bemporad and Morari MPC book)
         # The equality constraint is: G*z = E * x(t) + L
-        Gx = np.eye(self.n * (self.N + 1))
-        Gu = np.zeros((self.n * (self.N + 1), self.d * (self.N)))
+        Gx = np.eye(self.n * self.Nx)
+        Gu = np.zeros((self.n * self.Nx, self.d * self.Nu))
 
-        E = np.zeros((self.n * (self.N + 1), self.n))
+        E = np.zeros((self.n * self.Nx, self.n))
         E[np.arange(self.n)] = np.eye(self.n)
 
-        L = np.zeros(self.n * (self.N + 1))
+        L = np.zeros(self.n * self.Nx)
 
-        for i in range(0, self.N):
+        for i in range(0, self.Nu):
             if self.timeVarying == True:
                 Gx[(self.n + i*self.n):(self.n + i*self.n + self.n), (i*self.n):(i*self.n + self.n)] = -self.A[i]
                 Gu[(self.n + i*self.n):(self.n + i*self.n + self.n), (i*self.d):(i*self.d + self.d)] = -self.B[i]
@@ -336,24 +347,24 @@ class MPC():
 
     def buildCost(self):
         # The cost is: (1/2) * z' H z + q' z
-        listQ = [self.Q] * (self.N)
+        listQ = [self.Q] * (self.Nx-1)
         Hx = linalg.block_diag(*listQ)
 
-        listTotR = [self.R + 2 * np.diag(self.dR)] * (self.N) # Need to add dR for the derivative input cost
+        listTotR = [self.R + 2 * np.diag(self.dR)] * (self.Nu) # Need to add dR for the derivative input cost
         Hu = linalg.block_diag(*listTotR)
         # Need to condider that the last input appears just once in the difference
         for i in range(0, self.d):
             Hu[ i - self.d, i - self.d] = Hu[ i - self.d, i - self.d] - self.dR[i]
 
         # Derivative Input Cost
-        OffDiaf = -np.tile(self.dR, self.N-1)
+        OffDiaf = -np.tile(self.dR, self.Nu-1)
         np.fill_diagonal(Hu[self.d:], OffDiaf)
         np.fill_diagonal(Hu[:, self.d:], OffDiaf)
 
         # Cost linear term for state and input
-        q = - 2 * np.dot(np.append(np.tile(self.xRef, self.N + 1), np.zeros(self.R.shape[0] * self.N)), linalg.block_diag(Hx, self.Qf, Hu))
+        q = - 2 * np.dot(np.append(np.tile(self.xRef, self.Nx), np.zeros(self.R.shape[0] * self.Nu)), linalg.block_diag(Hx, self.Qf, Hu))
         # Derivative Input (need to consider input at previous time step)
-        q[self.n*(self.N+1):self.n*(self.N+1)+self.d] = -2 * np.dot( self.OldInput, np.diag(self.dR) )
+        q[self.n*self.Nx:self.n*self.Nx+self.d] = -2 * np.dot( self.OldInput, np.diag(self.dR) )
         if self.slacks == True:
             quadSlack = self.Qslack[0] * np.eye(self.slackdim)
             linSlack  = self.Qslack[1] * np.ones(self.slackdim )

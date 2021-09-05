@@ -83,10 +83,6 @@ class Highway_env():
                 v_des = v0
             self.desired_x[i] = np.array([0,  lm[lane_des]+lane_width/2,v_des,0])
 
-        # x0 = np.array([[0,1.8,v0,0],[5,5.4,v0,0],[12,5.4,v0-1,0],[5,9,v0,0]])
-        # for i in range(0,self.NV):
-        #     self.veh_set.append(vehicle(x0[i],dt=self.dt,backupidx = 0))
-        #     self.desired_x[i] = np.array([0,  x0[i,1],v0,0])
 
 
 
@@ -145,20 +141,6 @@ class Highway_env():
                 if i>0:
                     self.xbackup = np.vstack((self.xbackup,np.reshape(np.array(xx[0:self.mpc.N+1]),[1,-1])))
 
-        ## MPC for vehicle 0
-        # X_list = np.empty(self.NV)
-        # for i in range(0,self.NV):
-        #     X_list[i]=self.veh_set[i].state[0]
-        # idx = np.argmax(X_list)
-        # if idx ==0:
-        #     vdes = 10
-        #     Ydes = self.veh_set[0].state[1]
-        #     # pdb.set_trace()
-        # else:
-        #     Xdes = self.veh_set[idx].state[0]+5
-        #     Ydes = self.veh_set[idx].state[1]
-        #     vdes = self.veh_set[idx].state[2]+0.5*(Xdes-self.veh_set[0].state[0])
-        # Xdes = self.veh_set[1].state[0]+7
 
         Ydes = 1.8+self.veh_set[0].laneidx*3.6
         vdes = v0
@@ -199,8 +181,7 @@ class Highway_env():
                                 xj = xx_set[j][self.veh_set[j].backupidx][t]
                                 eps = 1e-6
                                 h = veh_col(xi,xj,[(self.veh_set[i].v_length+self.veh_set[j].v_length)/2+1,(self.veh_set[i].v_width+self.veh_set[j].v_width)/2+0.2])
-                                # if h<0 and i==1 and j==0:
-                                #     pdb.set_trace()
+
                                 if h<2:
                                     dh = np.zeros(4)
                                     dh[0] = (veh_col(xi+[eps,0,0,0],xj,[(self.veh_set[i].v_length+self.veh_set[j].v_length)/2+1,(self.veh_set[i].v_width+self.veh_set[j].v_width)/2+0.2])-h)/eps
@@ -224,13 +205,11 @@ class Highway_env():
                 prob = osqp.OSQP()
                 prob.setup(P, q, AA, lb, ub, alpha=1.0,verbose=False)
                 res = prob.solve()
-                # if res.x[0]<-3:
-                #     pdb.set_trace()
+
 
                 if res.info.status_val == 1 or res.info.status_val == 2:
                     u_set[i] = res.x[0:2]
                 else:
-                    # pdb.set_trace()
                     if res.x.shape[0]>0:
                         u_set[i] = res.x[0:2]
                     else:
@@ -239,7 +218,6 @@ class Highway_env():
             else:
                 uu = np.maximum(u0_set[i],-umax)
                 u_set[i] = np.minimum(uu,umax)
-            # pdb.set_trace()
             self.veh_set[i].step(u_set[i])
             x_set[i] = self.veh_set[i].state
 
@@ -277,7 +255,6 @@ class Highway_env():
 
                 ## change backup
                 self.veh_set[i].backupidx = np.random.choice(range(0,self.m), 1, p=H[self.veh_set[i].backupidx])[0]
-                # pdb.set_trace()
                 if np.isnan(self.b).any():
                     pdb.set_trace()
         return u_set,x_set,xx_set,self.mpc.xPred[1:,0:4]
@@ -400,10 +377,8 @@ def Highway_sim(env,T):
             backup_rec[i][t]=xx_set[i]
             backup_choice_rec[i][t] = env.veh_set[i].backupidx
         b_rec[t] = env.b.copy()
-
-
         t=t+1
-    # state_rec = np.array(state_rec)
+
     return state_rec,input_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,collision
 def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,lm,output=None):
     if output:
@@ -425,15 +400,6 @@ def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,
 
     for patch in veh_patch:
         ax.add_patch(patch)
-    # for j in range(0, len(lm)):
-    #     plt.plot([lm[j], lm[j]], [-30, 1000], 'go--', linewidth=2)
-
-    # pred_tr_patch = []
-    # if plotPredictionFlag == True:
-    #     for ii in range(1, env.ftocp.xSol.shape[1]):
-    #         pred_tr_patch.append(plt.Rectangle((env.veh_set[0].x_pred[0][ii]-veh.v_width/2, env.veh_set[0].y_pred[0][ii]-veh.v_length/2), veh.v_width, veh.v_length, fc='y', zorder=0))
-    #     for patch in pred_tr_patch:
-    #         ax.add_patch(patch)
 
     def animate(t,veh_patch,state_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,env,ego_idx=0):
 
@@ -441,10 +407,7 @@ def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,
         ego_y = state_rec[ego_idx][t][1]
         ego_x = state_rec[ego_idx][t][0]
         ax.clear()
-        # if env.merge_side==0:
-        #     ax.set_xlim(-1, 39)
-        # else:
-        #     ax.set_xlim(env.N_lane*lane_width-39, env.N_lane*lane_width+1)
+
         xmin = ego_x-20
         xmax = ego_x+30
         ymin = ego_y-10
@@ -489,24 +452,7 @@ def animate_scenario(env,state_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,
         plt.plot([xmin-50, xmax+50],[lm[env.N_lane], lm[env.N_lane]], 'g', linewidth=2)
 
 
-        # if plotPredictionFlag == True:
-        #
-        #     for ii in range(1, env.ftocp.xSol.shape[1]):
-        #         pred_tr_patch[ii-1].set_xy([env.veh_set[0].x_pred[t][ii]-veh.v_width/2, env.veh_set[0].y_pred[t][ii]-veh.v_length/2])
-        #         ax.add_patch(pred_tr_patch[ii-1])
-            # for ii in range(0,len(env.veh_set[0].obs_rec_x[t])):
-            #     for jj in range(0,len(env.veh_set[0].obs_rec_x[t][ii])):
-            #         obs_patch = plt.Rectangle((env.veh_set[0].obs_rec_x[t][ii][jj]-veh.v_width/2, env.veh_set[0].obs_rec_y[t][ii][jj]-veh.v_length/2), veh.v_width, veh.v_length, fc='m', zorder=0)
-            #         ax.add_patch(obs_patch)
 
-        # ax.axis('equal')
-        # ax.set_xlim(0, env.N_lane*lane_width)
-        # ax.set_ylim(ego_y-20, ego_y+20)
-
-
-        # return near_veh
-        # print(len(ax.patches))
-        # print(len(plotted_veh_ID))
         return veh_patch
     anim = animation.FuncAnimation(fig, animate, fargs=(veh_patch,state_rec,backup_rec,backup_choice_rec,b_rec,xPred_rec,env,ego_idx,),
                                    frames=nframe,

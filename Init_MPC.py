@@ -45,14 +45,36 @@ def initBranchMPC(n,d,N,NB,xRef,am,rm,N_lane,W):
 
     Fu = np.kron(np.eye(2), np.array([1, -1])).T
     bu = np.array([[am],   # -Min Acceleration
-                   [0.5*am],   # Max Acceleration
+                   [am],   # Max Acceleration
                    [rm],  # -Min Steering
                    [rm]]) # Max Steering
 
     # Tuning Parameters
-    Q = np.diag([0., 1.5, 2, 5.]) # vx, vy, wz, epsi, s, ey
-    R = np.diag([10, 100.0])                  # delta, a
-    Qslack = 1 * np.array([0, 100])
+    Q = np.diag([0., 3, 3, 10.]) # vx, vy, wz, epsi, s, ey
+    R = np.diag([1, 100.0])                  # delta, a
+
+    Qslack = 1 * np.array([0, 300])
 
     mpcParameters    = BranchMPCParams(n=n, d=d, N=N, NB = NB, Q=Q, R=R, Fx=Fx, bx=bx, Fu=Fu, bu=bu, xRef=xRef, slacks=True, Qslack=Qslack, timeVarying = True)
+    return mpcParameters
+def initquadBranchMPC(n,d,N,NB,xRef,vxm,vym,rm):
+    Fx = np.empty([0,n])
+
+    bx = np.empty([0,1]),           # min psi
+
+    Fu = np.kron(np.eye(3), np.array([1, -1])).T
+    bu = np.array([[vxm],   # -Min Acceleration
+                   [0],   # Max Acceleration
+                   [vym],  # -Min Steering
+                   [vym],
+                   [rm],
+                   [rm]]) # Max Steering
+
+    # Tuning Parameters
+    Q = np.diag([1., 1., 1]) # vx, vy, wz, epsi, s, ey
+    R = np.diag([1., 100., 1.])                  # delta, a
+    dR = np.array([0.9,5,1])
+    Qslack = 1 * np.array([0, 300])
+
+    mpcParameters    = BranchMPCParams(n=n, d=d, N=N, NB = NB, Q=Q, R=R,dR = dR, Fx=Fx, bx=bx, Fu=Fu, bu=bu, xRef=xRef, slacks=True, Qslack=Qslack, timeVarying = True)
     return mpcParameters
