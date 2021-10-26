@@ -663,5 +663,5 @@ def sim_merge(mpc,pred_model,N_lane,merge_lane,merge_s ,merge_R, merge_side):
 
     NV = 2
     env = Highway_env_merge(NV,N_lane, mpc, pred_model, merge_lane,merge_s,merge_R, merge_side,pred_model[0].dt)
-    state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,collision = Highway_sim(env,6)
+    state_rec,input_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,branch_w_rec,collision = Highway_sim(env,6)
     animate_scenario(env,state_rec,backup_rec,backup_choice_rec,xPred_rec,zPred_rec,lm)

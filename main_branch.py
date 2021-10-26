@@ -73,5 +73,5 @@ def sim_merge():
 
 
 if __name__== "__main__":
-  sim_overtake()
-  # sim_merge()
+  # sim_overtake()
+  sim_merge()
